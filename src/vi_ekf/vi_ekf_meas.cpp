@@ -297,7 +297,7 @@ void VIEKF::h_alt(const xVector& x, zVector& h, hMatrix& H, const int id) const
 void VIEKF::h_att(const xVector& x, zVector& h, hMatrix& H, const int id) const
 {
   (void)id;
-  h = x.block<4,1>((int)xATT, 0);
+  h.topRows(4) = x.block<4,1>((int)xATT, 0);
   
   H.setZero();
   H.block<3,3>(0, dxATT) = I_3x3;
@@ -309,7 +309,7 @@ void VIEKF::h_pos(const xVector& x, zVector& h, hMatrix& H, const int id) const
   h.topRows(3) = x.block<3,1>((int)xPOS,0);
   
   H.setZero();
-  H.block<3,3>(0, (int)xPOS) = I_3x3;
+  H.block<3,3>(0, (int)dxPOS) = I_3x3;
 }
 
 void VIEKF::h_vel(const xVector& x, zVector& h, hMatrix& H, const int id) const
@@ -325,7 +325,7 @@ void VIEKF::h_qzeta(const xVector& x, zVector& h, hMatrix &H, const int id) cons
 {
   int i = global_to_local_feature_id(id);
   
-  h = x.block<4,1>(xZ+i*5, 0);
+  h.topRows(4) = x.block<4,1>(xZ+i*5, 0);
   
   H.setZero();
   H.block<2,2>(0, dxZ + i*3) = I_2x2;
@@ -364,6 +364,46 @@ void VIEKF::h_inv_depth(const xVector& x, zVector& h, hMatrix& H, const int id) 
   H.setZero();
   H(0, dxZ+3*i+2) = 1.0;
 }
+
+void VIEKF::h_gps(const xVector &x, zVector &h, hMatrix &H, const int id) const
+{
+  (void)id; // tell the compiler we aren't using this variable so it doesn't get mad at us
+
+  /// HAYDEN - PUT THE MEASUREMENT MODEL HERE [p_B/E^E; v_B/E^E]
+  h.setZero();
+  H.setZero();
+  // define ZNED in ECEF frame
+  // define ZECEF in ECEF frame
+  // convert unit vector transform to quaternion
+  Xformd Pinit = T_e_I_;
+  Vector3d ZECEF;
+  Vector3d YECEF;
+  Vector3d ZNEDI;
+  Vector3d YNEDI;
+  Quatd q1;
+  Quatd q2;
+  Quatd qinit;
+  Quatd qb;
+  ZECEF << 0,0,1;
+  YECEF << 0,1,0;
+  ZNEDI = -1*(Pinit.t_)/(sqrt(Pinit.t_.transpose()*Pinit.t_)); //normalize
+  YNEDI = skew(ZECEF)*(-ZNEDI);
+  q1.from_two_unit_vectors(ZNEDI,ZECEF);
+  q2.from_two_unit_vectors(YNEDI,YECEF);
+  qinit = q1.otimes(q2);
+  qinit.normalize();
+  qb = x.block<4,1>((int)xATT, 0);
+  qb.normalize();
+  // set top left block of H to qinit.R
+  H.block<3,3>(0,(int)dxPOS) = qinit.R();
+  // set bottom center block of H to qinit.R*qb.R (qb is data input quaternion)
+  H.block<3,3>(3,(int)dxVEL) = qinit.R()*qb.R();
+  // set bottom right block of H to qinit.R*qb.R*skew(vb) (where vb is the obtained velocity)
+  H.block<3,3>(3,(int)dxATT) = qinit.R()*qb.R()*skew(x.block<3,1>((int)xVEL,0));
+  h.topRows(3) = qinit.R()*x.block<3,1>((int)xPOS,0)+Pinit.t_;
+  h.bottomRows(3) = qinit.R()*qb.R()*x.block<3,1>((int)xVEL,0);
+}
+
 
 void VIEKF::h_pixel_vel(const xVector& x, zVector& h, hMatrix& H, const int id) const
 {
